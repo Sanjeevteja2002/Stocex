@@ -29,9 +29,9 @@ We focus on selecting the optimal financial markets for deploying our AI-driven 
 - **Machine Learning Libraries:** TensorFlow, scikit-learn, XGBoost
 - **Data Processing:** Pandas, NumPy
 - **Visualization:** Matplotlib, Seaborn, Power BI
-- **Trading API:** Alpaca, Interactive Brokers
 - **Database:** PostgreSQL, MongoDB
-- **Cloud & Deployment:** AWS, Azure, Docker
+- **Machine Learning Models:** Yet to be decided
+- **Trading API:** Yet to be decided
 
 ## Features
 - **Real-time Market Data Processing**
@@ -74,7 +74,7 @@ We welcome contributions! Please follow these steps:
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Contact
-For any queries or collaboration, reach out to us at **stocex.team@email.com**.
+For any queries or collaboration, reach out to us at **stocex.team@gmail.com**.
 
 ---
 > *"Intelligent trading through AI - The future of investing."*
