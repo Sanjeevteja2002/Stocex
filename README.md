@@ -73,7 +73,7 @@ python -m spacy download en_core_web_sm
 
 ```bash
 # Just run the script
-python stocex.py
+python Stocex.py
 ```
 
 That’s it — the script handles:
