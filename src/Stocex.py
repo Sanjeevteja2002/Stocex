@@ -9,62 +9,78 @@ Original file is located at
 ## **Stocex project ipynb file.**
 """
 
-# Code to load FinBERT model for use in next steps
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import torch
-
-# Load FinBERT model from HuggingFace
-finbert_tokenizer = AutoTokenizer.from_pretrained("yiyanghkust/finbert-tone")
-finbert_model = AutoModelForSequenceClassification.from_pretrained("yiyanghkust/finbert-tone")
-labels = ["negative", "neutral", "positive"]
-
-def get_finbert_sentiment(text):
-    inputs = finbert_tokenizer(text, return_tensors="pt", truncation=True, padding=True)
-    with torch.no_grad():
-        outputs = finbert_model(**inputs)
-    probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
-    prediction = labels[probs.argmax()]
-    return prediction, probs.max().item()
-
 # Necessary libraries
 #!pip install yfinance
+#!pip install newspaper3k
+#!pip install transformers torch
+#!pip install yfinance
+!pip install chronos-ts --upgrade --quiet
 import json
 
-"""## ***Step 1*** - Retrieve latest news from NewsAPI"""
+"""## ***Step 1*** - Retrieve latest news from NewsAPI
+
+Pull yesterday’s financial news headlines using NewsAPI for the latest market-moving events
+"""
 
 # Code to retrieve yesterday news from NewSAPI.
 
 import requests
-import datetime
+import pandas as pd
+from datetime import datetime, timedelta
 
-NEWS_API_KEY = "c32779e494d04276b24ac0eb577c5ca2"  # My generated API key
+# 🔑 Enter your NewsAPI key here
+NEWSAPI_KEY = "c32779e494d04276b24ac0eb577c5ca2"
 
-# Function to fetch yesterday news
 def fetch_yesterdays_news():
-    today = datetime.datetime.utcnow().date()
-    yesterday = today - datetime.timedelta(days=1)
+    yesterday = datetime.now() - timedelta(days=1)
+    date_str = yesterday.strftime("%Y-%m-%d")
 
-    url = (
-        f"https://newsapi.org/v2/everything?"
-        f"q=stocks OR market OR earnings OR inflation OR fed&"
-        f"from={yesterday}&to={yesterday}&"
-        f"language=en&"
-        f"sortBy=publishedAt&"
-        f"pageSize=100&"
-        f"apiKey={NEWS_API_KEY}"
+    query = (
+    "stocks OR stock OR market OR earnings OR inflation OR layoffs OR fed OR economic data "
+    "OR acquisition OR merger OR buyout OR billion OR million OR IPO OR funding "
+    "OR forecast OR guidance OR quarterly results OR revenue OR profits OR shares "
+    "OR dividends OR buybacks OR takeover OR analysts OR downgrade OR upgrade"
     )
 
-    print(f"🔍 Fetching news for {yesterday}")
+    domains = (
+        "bloomberg.com,cnn.com,cnbc.com,wsj.com,reuters.com,marketwatch.com,"
+        "yahoo.com,investopedia.com,seekingalpha.com,fool.com,fortune.com,"
+        "forbes.com,techcrunch.com,businessinsider.com,barrons.com"
+    )
+
+    url = (
+        f"https://newsapi.org/v2/everything?q={query}"
+        f"&from={date_str}&to={date_str}"
+        f"&language=en&sortBy=publishedAt"
+        f"&pageSize=100"
+        f"&domains={domains}"
+        f"&apiKey={NEWSAPI_KEY}"
+    )
+
     response = requests.get(url)
     data = response.json()
 
-    if data.get("status") != "ok":
-        print("❌ Error fetching news:", data)
-        return []
+    if "articles" in data:
+        articles = data["articles"]
+        df = pd.DataFrame([{
+            "title": article["title"],
+            "description": article["description"],
+            "publishedAt": article["publishedAt"],
+            "source": article["source"]["name"]
+        } for article in articles])
+        return df
+    else:
+        print("No articles found or error in API call.")
+        return pd.DataFrame()
 
-    return data.get("articles", [])
+# 🚀 Run it
+news_df = fetch_yesterdays_news()
+news_df.head(10)  # Preview the headlines
 
-"""##***Step 2*** - Extract Mentioned Companies from Headlines"""
+"""##***Step 2*** - Extract Tickers from Yesterday’s News
+
+Identify all the stock tickers mentioned in yesterday’s headlines using NLP
+"""
 
 import spacy
 nlp = spacy.load("en_core_web_sm")
@@ -76,9 +92,9 @@ def load_sp500_tickers():
     url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
     df = pd.read_csv(url)
 
-    print("📊 Loaded columns:", df.columns.tolist())  # Debugging line
+    print("📊 Loaded columns:", df.columns.tolist())  # Debugging
 
-    # If the columns are wrong, fix them
+    # Fix column names if needed
     if 'Name' not in df.columns or 'Symbol' not in df.columns:
         if len(df.columns) >= 2:
             df.columns = ['Symbol', 'Name'] + list(df.columns[2:])
@@ -87,9 +103,20 @@ def load_sp500_tickers():
 
     return {row['Name'].lower(): row['Symbol'] for _, row in df.iterrows()}
 
-#Named Entity Extraction from News Headlines
-def extract_companies_from_articles(articles, known_companies):
+# ✅ Named Entity Recognition + Ticker Extraction
+def extract_companies_from_articles(news_df, known_companies):
+    """
+    Extracts company mentions from a DataFrame of news articles and maps them to S&P 500 tickers.
+
+    Args:
+        news_df (DataFrame): News articles with 'title' and 'description' columns
+        known_companies (dict): Mapping of company names (lowercase) to tickers
+
+    Returns:
+        List of matched tickers
+    """
     mentioned_tickers = set()
+    articles = news_df.to_dict(orient="records")  # ✅ Ensure correct format
 
     for article in articles:
         text = (article.get("title") or "") + " " + (article.get("description") or "")
@@ -99,121 +126,121 @@ def extract_companies_from_articles(articles, known_companies):
             if ent.label_ == "ORG":
                 company_name = ent.text.lower()
                 for known_name, ticker in known_companies.items():
-                    if company_name in known_name:  # simple substring match
+                    if company_name in known_name:  # simple fuzzy match
                         mentioned_tickers.add(ticker)
 
     return list(mentioned_tickers)
 
-# Step 1: Fetch yesterday’s headlines
-articles = fetch_yesterdays_news()
-
-# Step 2: Extract tickers mentioned in news
+news_df = fetch_yesterdays_news()
 known_companies = load_sp500_tickers()
-tickers_from_news = extract_companies_from_articles(articles, known_companies)
 
-print("🧠 Tickers mentioned in yesterday’s news:", tickers_from_news)
+mentioned_tickers = extract_companies_from_articles(news_df, known_companies)
+print("🧠 Tickers mentioned in yesterday’s news:", mentioned_tickers)
 
-"""## ***Step 3*** — Sentiment Scoring (FinBERT)
-
-Now we use FinBERT model to understands financial language and market sentiment better than general-purpose models like TextBlob or vanilla BERT.
-
-We write a function to:
-
-1.   Group news articles by ticker
-2.   Run FinBERT on the text (headline + description)
-3.   Return average sentiment score per ticker
+"""## ***Step 3*** — Sentiment Analysis with FinBERT
+Analyze sentiment of the headlines (from NewsAPI) and any historical headlines you have using FinBERT, a financial-domain BERT model.
 """
 
-#Score Sentiment Per Ticker
+import pandas as pd
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch
+import numpy as np
 from collections import defaultdict
 
-def score_sentiment_by_ticker(articles, known_companies):
-    ticker_sentiments = defaultdict(list)
+# ✅ Load FinBERT
+tokenizer = AutoTokenizer.from_pretrained("yiyanghkust/finbert-tone")
+model = AutoModelForSequenceClassification.from_pretrained("yiyanghkust/finbert-tone")
+
+# ✅ Get sentiment for a piece of text
+def get_finbert_sentiment(text):
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    probs = torch.nn.functional.softmax(outputs.logits, dim=-1).numpy()[0]
+    sentiment_idx = np.argmax(probs)
+    sentiment_label = ["negative", "neutral", "positive"][sentiment_idx]
+    score = probs[sentiment_idx]
+    return sentiment_label, float(score)
+
+# ✅ Score sentiment ONLY for tickers from Step 2 (your extracted tickers)
+def score_sentiment_for_mentioned_tickers(news_df, known_companies, mentioned_tickers):
+    # Reverse mapping: Ticker -> Company name (e.g. "MSFT": "Microsoft Corporation")
+    ticker_to_name = {v: k for k, v in known_companies.items() if v in mentioned_tickers}
+
+    sentiment_records = defaultdict(list)
+    articles = news_df.to_dict(orient="records")
 
     for article in articles:
         text = (article.get("title") or "") + " " + (article.get("description") or "")
-        doc = nlp(text)
+        text_lower = text.lower()
+        sentiment, score = get_finbert_sentiment(text)
 
-        orgs = [ent.text.lower() for ent in doc.ents if ent.label_ == "ORG"]
-        matched_tickers = set()
+        for ticker in mentioned_tickers:
+            company_name = ticker_to_name.get(ticker, "").lower()
+            if ticker.lower() in text_lower or company_name in text_lower:
+                sentiment_records[ticker].append((sentiment, score))
 
-        for org in orgs:
-            for known_name, ticker in known_companies.items():
-                if org in known_name:
-                    matched_tickers.add(ticker)
-
-        if matched_tickers:
-            sentiment, confidence = get_finbert_sentiment(text)
-            score = 1 if sentiment == "positive" else -1 if sentiment == "negative" else 0
-            for ticker in matched_tickers:
-                ticker_sentiments[ticker].append(score)
-
-    # Format into DataFrame
-    summary = []
-    for ticker, scores in ticker_sentiments.items():
-        avg_score = sum(scores) / len(scores)
-        label = "Positive" if avg_score > 0 else "Negative" if avg_score < 0 else "Neutral"
-        summary.append({
+    # Aggregate
+    result = []
+    for ticker, entries in sentiment_records.items():
+        scores = [s for _, s in entries]
+        sentiments = [label for label, _ in entries]
+        avg_score = np.mean(scores)
+        dominant = max(set(sentiments), key=sentiments.count)
+        result.append({
             "Ticker": ticker,
-            "Mentions": len(scores),
-            "Avg Sentiment Score": avg_score,
-            "Sentiment Label": label
+            "Mentions": len(entries),
+            "Avg Sentiment Score": round(avg_score, 3),
+            "Dominant Sentiment": dominant
         })
 
-    return pd.DataFrame(summary).sort_values(by="Mentions", ascending=False)
+    return pd.DataFrame(result)
 
-# From Step 1 & 2
-articles = fetch_yesterdays_news()
-known_companies = load_sp500_tickers()
+sentiment_df = score_sentiment_for_mentioned_tickers(news_df, known_companies, mentioned_tickers)
+print(sentiment_df)
 
-# Step 2 recap
-mentioned_tickers = extract_companies_from_articles(articles, known_companies)
+"""##***Step 4*** — Fetch historical price data for these tickers using yfinance
 
-# Step 3: FinBERT scoring
-sentiment_df = score_sentiment_by_ticker(articles, known_companies)
-sentiment_df
-
-"""##***Step 4*** — Intraday Data Fetch with yfinance
-
-## We are now going to fetch 1 month previous data from yfinance and process it into TimeGPT ##
-
-This is what we will do:
-
-
-
-1.   Pull 5-minute bars using yfinance
-2.   Slice to past 1 month
-3.   Send to TimeGPT to forecast next N bars
+Fetch daily stock price data for the tickers extracted from yesterday’s news (sentiment_df) using yfinance, covering the past 2 years.
 """
 
 import yfinance as yf
 import pandas as pd
 
-def fetch_intraday_data_yfinance(ticker, period_days=30):
-    df = yf.download(ticker, period=f"{period_days}d", interval="5m", progress=False)
+# ✅ STEP 4 - GOAL:
+# Retrieve daily closing price data (last 2 years) for all tickers analyzed in sentiment_df
 
-    # Flatten multi-index columns (if any)
-    df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+# 📌 Dynamically extract tickers from sentiment_df
+tickers_to_fetch = sentiment_df["Ticker"].dropna().unique().tolist()
 
-    # Select and format required columns
-    df = df[['Close']].reset_index()
-    df.rename(columns={'Datetime': 'timestamp', 'Close': 'value'}, inplace=True)
-    df['timestamp'] = df['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+# 🎯 Fetch function
+def fetch_price_history(tickers, years=5):
+    end = pd.Timestamp.today()
+    start = end - pd.DateOffset(years=years)
+    historical_data = {}
 
-    return df.to_dict(orient='records')
+    for ticker in tickers:
+        try:
+            df = yf.download(ticker, start=start.strftime('%Y-%m-%d'), end=end.strftime('%Y-%m-%d'), progress=False)
+            df.reset_index(inplace=True)
+            df = df[["Date", "Close"]].rename(columns={"Close": "Price"})
+            historical_data[ticker] = df
+        except Exception as e:
+            print(f"❌ Failed to fetch {ticker}: {e}")
 
-#Since we are using the free public TimeGPT API, nixtla does not support intraday (5-minute) data. So changing to hourly.
-def resample_to_daily(series_5min):
-    df = pd.DataFrame(series_5min)
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df.set_index('timestamp', inplace=True)
-    daily_df = df['value'].resample('1D').mean().dropna().reset_index()
-    daily_df['timestamp'] = daily_df['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-    return daily_df.to_dict(orient='records')
+    return historical_data
 
-# Try it out
-data = fetch_intraday_data_yfinance("ED", period_days=30)
-print(data[:5])  # Preview
+# ✅ Fetch and preview
+historical_price_data = fetch_price_history(tickers_to_fetch)
+
+# 👀 Preview top 5 rows for the first 3 tickers
+for ticker in list(historical_price_data.keys())[:3]:
+    print(f"\n📈 {ticker} - Sample Data:\n", historical_price_data[ticker].head(50))
+
+df = historical_price_data['FANG']
+print("Earliest Date:", df['Date'].min())
+print("Latest Date:", df['Date'].max())
+print("Rows:", len(df))
 
 """## ***Step 5*** - Forecast Next 1 Hour (12 Bars Ahead) with TimeGPT"""
 
